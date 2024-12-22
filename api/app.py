@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
-from sentence_transformers import SentenceTransformer, util
 from bs4 import BeautifulSoup
 from PyPDF2 import PdfReader
 import os
@@ -8,13 +7,22 @@ import uuid
 import requests
 from pathlib import Path
 from flask_cors import CORS
+from langchain.document_loaders import PyPDFLoader
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.chains import RetrievalQA
+from langchain.chat_models import ChatOpenAI
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:5173"])
 
 data_store = {}
 
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+# Langchain setup
+embeddings = OpenAIEmbeddings()
+vector_store = None
+qa_chain = None
+llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
 
 @app.route("/process_url", methods=["POST"])
 def process_url():
@@ -35,6 +43,14 @@ def process_url():
         # Generate a unique chat_id and store the content
         chat_id = str(uuid.uuid4())
         data_store[chat_id] = content
+
+        # Create documents for the scraped content
+        documents = [{"page_content": content, "metadata": {"source": url}}]
+        global vector_store
+        vector_store = FAISS.from_documents(documents, embeddings)
+
+        global qa_chain
+        qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vector_store.as_retriever())
 
         return jsonify({
             "chat_id": chat_id,
@@ -58,16 +74,24 @@ def process_pdf():
         file_path = Path(f"./temp_{filename}")
         file.save(file_path)
 
-        # Extract text from the PDF
-        pdf_reader = PdfReader(str(file_path))
-        content = "\n".join(page.extract_text() for page in pdf_reader.pages if page.extract_text())
+        # Use Langchain to load and process the PDF
+        loader = PyPDFLoader(str(file_path))
+        documents = loader.load()
+
+        # Create FAISS index for retrieval
+        global vector_store
+        vector_store = FAISS.from_documents(documents, embeddings)
+
+        # Create RetrievalQA Chain
+        global qa_chain
+        qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vector_store.as_retriever())
 
         # Remove the temporary file
         file_path.unlink()
 
-        # Generate a unique chat_id and store the content
+        # Generate a unique chat_id
         chat_id = str(uuid.uuid4())
-        data_store[chat_id] = content.strip()
+        data_store[chat_id] = "PDF content processed and stored successfully."
 
         return jsonify({
             "chat_id": chat_id,
@@ -85,31 +109,17 @@ def chat():
         if not chat_id or not question:
             return jsonify({"error": "chat_id and question are required."}), 400
 
-        # Fetch the stored content by chat_id
+        # Check if content is available in the store
         content = data_store.get(chat_id)
         if not content:
             return jsonify({"error": "chat_id not found."}), 404
 
-        # Split content into chunks (e.g., sentences)
-        chunks = content.split("\n")
-        chunk_embeddings = embedding_model.encode(chunks, convert_to_tensor=True)
+        if vector_store and qa_chain:
+            # Use the RetrievalQA chain to get the response
+            response = qa_chain.run(question)
+            return jsonify({"response": response})
 
-        # Generate embeddings for the question
-        question_embedding = embedding_model.encode(question, convert_to_tensor=True)
-
-        # Compute similarity scores
-        similarities = util.pytorch_cos_sim(question_embedding, chunk_embeddings)[0]
-        top_score, top_idx = similarities.max(), similarities.argmax()
-
-        print("top score : ",top_score)
-
-        # Return the most relevant chunk if similarity is above a threshold
-        if top_score > 0.2:
-            response_text = chunks[top_idx]
-        else:
-            response_text = "No relevant answer found."
-
-        return jsonify({"response": response_text, "similarity": top_score.item()})
+        return jsonify({"error": "No vector store or QA chain available."}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
