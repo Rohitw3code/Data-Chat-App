@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import { Layout } from './components/Layout';
 import { Header } from './components/Header';
 import { Card } from './components/Card';
 import { FileUpload } from './components/FileUpload';
 import { ProcessUrl } from './components/ProcessUrl';
 import { ChatInterface } from './components/ChatInterface';
 import { MessageList } from './components/MessageList';
+import { documentApi } from './api/client';
 
-function App() {
+export function App() {
   const [url, setUrl] = useState('');
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [chatId, setChatId] = useState('');
@@ -20,9 +21,9 @@ function App() {
     
     setIsProcessing(true);
     try {
-      const res = await axios.post('http://localhost:8000/process_url', { url });
-      setChatId(res.data.chat_id);
-      setMessages(prev => [...prev, res.data.message]);
+      const { chat_id, message } = await documentApi.processUrl(url);
+      setChatId(chat_id);
+      setMessages(prev => [...prev, message]);
       setUrl('');
     } catch (error: any) {
       alert('Error processing URL: ' + error.response?.data?.detail || error.message);
@@ -36,16 +37,9 @@ function App() {
 
     setIsProcessing(true);
     try {
-      const formData = new FormData();
-      formData.append('file', pdfFile);
-
-      const res = await axios.post('http://localhost:8000/process_pdf', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-      setChatId(res.data.chat_id);
-      setMessages(prev => [...prev, res.data.message]);
+      const { chat_id, message } = await documentApi.processPdf(pdfFile);
+      setChatId(chat_id);
+      setMessages(prev => [...prev, message]);
       setPdfFile(null);
     } catch (error: any) {
       alert('Error processing PDF: ' + error.response?.data?.detail || error.message);
@@ -58,11 +52,8 @@ function App() {
     if (!chatId || !question.trim()) return;
 
     try {
-      const res = await axios.post('http://localhost:8000/chat', {
-        chat_id: chatId,
-        question: question.trim(),
-      });
-      setMessages(prev => [...prev, `Q: ${question}`, `A: ${res.data.response}`]);
+      const { response } = await documentApi.chat(chatId, question.trim());
+      setMessages(prev => [...prev, `Q: ${question}`, `A: ${response}`]);
       setQuestion('');
     } catch (error: any) {
       alert('Error sending chat: ' + error.response?.data?.detail || error.message);
@@ -70,57 +61,58 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
-      <div className="max-w-4xl mx-auto px-4">
-        <Header />
-        
-        <div className="space-y-6">
-          <Card>
-            <ProcessUrl
-              url={url}
-              onUrlChange={setUrl}
-              onProcess={processUrl}
-            />
-          </Card>
+    <Layout>
+      <Header />
+      
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Left side - Document Processing */}
+          <div className="w-full lg:w-1/3 space-y-6">
+            <Card className="bg-white/50 backdrop-blur-sm">
+              <ProcessUrl
+                url={url}
+                onUrlChange={setUrl}
+                onProcess={processUrl}
+                isProcessing={isProcessing}
+              />
+            </Card>
 
-          <Card>
-            <FileUpload onFileChange={setPdfFile} />
-            {pdfFile && (
-              <div className="mt-4 flex justify-between items-center">
-                <span className="text-sm text-gray-600">
-                  Selected: {pdfFile.name}
-                </span>
-                <button
-                  onClick={processPdf}
-                  disabled={isProcessing}
-                  className="px-6 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-                >
-                  Process PDF
-                </button>
+            <Card className="bg-white/50 backdrop-blur-sm">
+              <FileUpload 
+                onFileChange={setPdfFile}
+                file={pdfFile}
+                onProcess={processPdf}
+                isProcessing={isProcessing}
+              />
+            </Card>
+          </div>
+
+          {/* Right side - Chat Interface */}
+          <div className="w-full lg:w-2/3">
+            <Card className="h-[600px] lg:h-[calc(100vh-12rem)] bg-white/50 backdrop-blur-sm relative" noPadding>
+              <div className="absolute inset-0 flex flex-col">
+                <div className="flex-grow overflow-y-auto p-6">
+                  <div className="max-w-3xl mx-auto">
+                    <MessageList messages={messages} />
+                  </div>
+                </div>
+                <ChatInterface
+                  question={question}
+                  onQuestionChange={setQuestion}
+                  onSend={sendChat}
+                  disabled={!chatId}
+                />
+                {chatId && (
+                  <div className="px-6 pb-2 text-xs text-gray-400 text-center">
+                    Session ID: {chatId}
+                  </div>
+                )}
               </div>
-            )}
-          </Card>
-
-          <Card>
-            <ChatInterface
-              question={question}
-              onQuestionChange={setQuestion}
-              onSend={sendChat}
-              disabled={!chatId}
-            />
-            {chatId && (
-              <div className="mt-4 text-sm text-gray-500">
-                Session ID: {chatId}
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            <MessageList messages={messages} />
-          </Card>
+            </Card>
+          </div>
         </div>
       </div>
-    </div>
+    </Layout>
   );
 }
 

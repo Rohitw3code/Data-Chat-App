@@ -26,38 +26,38 @@ llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
 
 @app.route("/process_url", methods=["POST"])
 def process_url():
-    try:
-        data = request.get_json()
-        url = data.get("url")
-        if not url:
-            return jsonify({"error": "URL is required."}), 400
+    # try:
+    data = request.get_json()
+    url = data.get("url")
+    if not url:
+        return jsonify({"error": "URL is required."}), 400
 
-        # Scrape the content from the URL
-        response = requests.get(url)
-        if response.status_code != 200:
-            return jsonify({"error": "Unable to fetch the URL."}), 400
+    # Scrape the content from the URL
+    response = requests.get(url)
+    if response.status_code != 200:
+        return jsonify({"error": "Unable to fetch the URL."}), 400
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        content = soup.get_text(separator="\n").strip()
+    soup = BeautifulSoup(response.text, "html.parser")
+    content = soup.get_text(separator="\n").strip()
 
-        # Generate a unique chat_id and store the content
-        chat_id = str(uuid.uuid4())
-        data_store[chat_id] = content
+    # Generate a unique chat_id and store the content
+    chat_id = str(uuid.uuid4())
+    data_store[chat_id] = content
 
-        # Create documents for the scraped content
-        documents = [{"page_content": content, "metadata": {"source": url}}]
-        global vector_store
-        vector_store = FAISS.from_documents(documents, embeddings)
+    # Create documents for the scraped content
+    documents = [{"page_content": content, "metadata": {"source": url}}]
+    global vector_store
+    vector_store = FAISS.from_documents(documents, embeddings)
 
-        global qa_chain
-        qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vector_store.as_retriever())
+    global qa_chain
+    qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vector_store.as_retriever())
 
-        return jsonify({
-            "chat_id": chat_id,
-            "message": "URL content processed and stored successfully."
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "chat_id": chat_id,
+        "message": "URL content processed and stored successfully."
+    })
+    # except Exception as e:
+    #     return jsonify({"error": str(e)}), 500
 
 @app.route("/process_pdf", methods=["POST"])
 def process_pdf():
